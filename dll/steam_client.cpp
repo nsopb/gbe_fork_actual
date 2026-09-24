@@ -122,7 +122,7 @@ Steam_Client::Steam_Client()
 
     // client
     PRINT_DEBUG("init client");
-    playtime_counter = new PlaytimeCounter(local_storage, settings_client->record_playtime);
+    playtime_counter = new PlaytimeCounter(local_storage, settings_client->record_playtime, settings_client);
     steam_overlay = new Steam_Overlay(settings_client, local_storage, callback_results_client, callbacks_client, run_every_runcb, network, playtime_counter);
 
     steam_user = new Steam_User(settings_client, local_storage, network, callback_results_client, callbacks_client, false);
