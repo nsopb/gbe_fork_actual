@@ -23,39 +23,41 @@
 #include <mutex>
 #include <string>
 
+class Settings; // forward declare
+
 class PlaytimeCounter {
 public:
-    explicit PlaytimeCounter(Local_Storage* local_storage, bool record_playtime = false);
+    // было: (Local_Storage*, bool record_playtime = false)
+    // стало: опционально Settings* для API (record_playtime берём из settings, если передан)
+    explicit PlaytimeCounter(Local_Storage* local_storage, bool record_playtime = false, Settings* settings = nullptr);
     ~PlaytimeCounter();
 
-    // Tick the playtime counter, call regularly
     void tick();
-
-    // Force load/save
     void load();
     void save();
 
-    // Get current playtime in seconds
     uint64_t seconds() const;
     uint64_t session_seconds() const;
 
-    // Pause/resume total or session accumulation (e.g. when game is unfocused)
     void set_pause_total(bool pause);
     void set_pause_session(bool pause);
 
     bool get_record_playtime() const { return record_playtime; }
 
 private:
+    void send_to_api();   // <-- новое
+
     Local_Storage* local_storage{};
+    Settings* settings{}; // <-- новое (может быть nullptr)
     bool record_playtime = false;
     const std::string playtime_filename = "playtime.txt";
     std::chrono::steady_clock::time_point last_tick{};
     uint64_t playtime_seconds = 0;
-    uint64_t playtime_accumulator_ms = 0; // sub-second accumulation
-    uint64_t session_seconds_accumulated = 0; // session time accumulated per tick
+    uint64_t playtime_accumulator_ms = 0;
+    uint64_t session_seconds_accumulated = 0;
     bool pause_total = false;
     bool pause_session = false;
     mutable std::mutex mutex;
     bool initialized = false;
-    uint64_t since_save = 0; // seconds since last save
+    uint64_t since_save = 0;
 };
