@@ -16,16 +16,23 @@
    <http://www.gnu.org/licenses/>.  */
 
 #include "dll/playtime.h"
-
+#include "dll/settings.h"
+#include <curl/curl.h>
 #include <limits>
 
-PlaytimeCounter::PlaytimeCounter(Local_Storage* local_storage, bool record_playtime)
+PlaytimeCounter::PlaytimeCounter(Local_Storage* local_storage, bool record_playtime, Settings* settings)
    : local_storage(local_storage),
+     settings(settings),
      record_playtime(record_playtime),
      last_tick(std::chrono::steady_clock::now())
 {
+    // если передали Settings и в нём явно включён record — подхватываем
+    if (settings && settings->record_playtime) {
+        this->record_playtime = true;
+    }
+
     load();
-    if (record_playtime) {
+    if (this->record_playtime) {
         save();
     }
 }
@@ -111,10 +118,18 @@ void PlaytimeCounter::load()
 void PlaytimeCounter::save()
 {
     if (!record_playtime) return;
-    std::lock_guard<std::mutex> lock(mutex);
 
-    std::string data = std::to_string(playtime_seconds);
-    local_storage->store_data("", playtime_filename, data.data(), static_cast<unsigned int>(data.size()));
+    PRINT_DEBUG("PlaytimeCounter::save() playtime_seconds=%llu",
+                (unsigned long long)playtime_seconds);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::string data = std::to_string(playtime_seconds);
+        local_storage->store_data("", playtime_filename, data.data(),
+                                  static_cast<unsigned int>(data.size()));
+    }
+
+    send_to_api(); // <-- новое, остальное как было
 }
 
 uint64_t PlaytimeCounter::seconds() const
@@ -139,4 +154,48 @@ void PlaytimeCounter::set_pause_session(bool pause)
 {
     std::lock_guard<std::mutex> lock(mutex);
     pause_session = pause;
+}
+void PlaytimeCounter::send_to_api()
+{
+    if (!settings || !settings->send_playtime_to_api) {
+        return;
+    }
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        PRINT_DEBUG("send_to_api: curl_easy_init failed");
+        return;
+    }
+
+    uint32_t appid = settings->get_local_game_id().AppID();
+    uint64_t pt = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pt = playtime_seconds;
+    }
+
+    std::string json_data =
+        "{\"appid\":" + std::to_string(appid) +
+        ",\"user_id\":" + std::to_string(settings->playtime_api_user_id) +
+        ",\"playtime_seconds\":" + std::to_string(pt) + "}";
+
+    PRINT_DEBUG("send_to_api: %s -> %s",
+                json_data.c_str(), settings->playtime_api_endpoint.c_str());
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_URL, settings->playtime_api_endpoint.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+
+    CURLcode res = curl_easy_perform(curl);
+    PRINT_DEBUG("send_to_api: %d (%s)", res, curl_easy_strerror(res));
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
 }
